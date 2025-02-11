@@ -41,10 +41,6 @@ namespace GithubGraphql
 
         private static async Task Main()
         {
-            // 1. Follow these steps to create a GitHub Access Token
-            //   https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/#creating-a-token
-            // 2. Select the following permissions for your GitHub Access Token: "repo:status", "public_repo"
-            // 3. Set this key as an environment variable GitHubKey=YOUR_ACCESS_TOKEN
             var key = Environment.GetEnvironmentVariable("GitHubKey") ??
                 throw new InvalidOperationException("Key not found");
 
@@ -54,7 +50,10 @@ namespace GithubGraphql
             };
 
             await foreach (var issue in RunPagedQueryAsync(client, PagedIssueQuery, "github_graphql"))
-                Console.WriteLine(issue);
+            {
+                if (issue["labels"]["nodes"].Any(n => (string)n["name"] == "bug"))
+                    Console.WriteLine(issue);
+            }
         }
 
         private static async IAsyncEnumerable<JToken> RunPagedQueryAsync(
