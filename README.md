@@ -1,3 +1,7 @@
+## Task
+
+Reveal all of the issues in this repository that have the label "bug", using this command line program.
+
 ## Setup
 
 1. Download + install [dotnet cli](https://dotnet.microsoft.com/en-us/download) if it's not already. Ensure `dotnet` is in your $PATH
