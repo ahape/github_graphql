@@ -6,7 +6,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Octokit;
 
-namespace GitHubActivityReport
+namespace GithubGraphql
 {
     public class GraphQLRequest
     {
@@ -14,66 +14,53 @@ namespace GitHubActivityReport
         public string Query { get; set; }
 
         [JsonProperty("variables")]
-        public IDictionary<string, object> Variables { get; } = new Dictionary<string, object>();
+        public Dictionary<string, object> Variables { get; } = [];
 
-        public string ToJsonText() =>
-            JsonConvert.SerializeObject(this);
+        public string ToJsonText() => JsonConvert.SerializeObject(this);
     }
 
     class Program
     {
         internal const string PagedIssueQuery =
 @"query ($repo_name: String!,  $start_cursor:String) {
-  repository(owner: ""dotnet"", name: $repo_name) {
-    issues(last: 25, before: $start_cursor)
-     {
-        totalCount
-        pageInfo {
-          hasPreviousPage
-          startCursor
-        }
-        nodes {
-          title
-          number
-          createdAt
-        }
+  repository(owner: ""ahape"", name: $repo_name) {
+    issues(last: 5, before: $start_cursor) {
+      pageInfo {
+        hasPreviousPage
+        startCursor
+      }
+      nodes {
+        title
+        number
+        createdAt
       }
     }
   }
+}
 ";
 
-        static async Task Main(string[] args)
+        private static async Task Main()
         {
-            //Follow these steps to create a GitHub Access Token
-            // https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/#creating-a-token
-            //Select the following permissions for your GitHub Access Token:
-            // - repo:status
-            // - public_repo
-            // Replace the 3rd parameter to the following code with your GitHub access token.
-            var key = GetEnvVariable("GitHubKey",
-            "You must store your GitHub key in the 'GitHubKey' environment variable",
-            "");
+            // 1. Follow these steps to create a GitHub Access Token
+            //   https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/#creating-a-token
+            // 2. Select the following permissions for your GitHub Access Token: "repo:status", "public_repo"
+            // 3. Set this key as an environment variable GitHubKey=YOUR_ACCESS_TOKEN
+            var key = Environment.GetEnvironmentVariable("GitHubKey") ??
+                throw new InvalidOperationException("Key not found");
 
             var client = new GitHubClient(new Octokit.ProductHeaderValue("IssueQueryDemo"))
             {
                 Credentials = new Octokit.Credentials(key)
             };
 
-            // <SnippetEnumerateAsyncStream>
-            int num = 0;
-            await foreach (var issue in runPagedQueryAsync(client, PagedIssueQuery, "github_graphql"))
-            {
+            await foreach (var issue in RunPagedQueryAsync(client, PagedIssueQuery, "github_graphql"))
                 Console.WriteLine(issue);
-                Console.WriteLine($"Received {++num} issues in total");
-            }
-            // </SnippetEnumerateAsyncStream>
         }
 
-        // <SnippetGenerateAsyncStream>
-        // <SnippetUpdateSignature>
-        private static async IAsyncEnumerable<JToken> runPagedQueryAsync(GitHubClient client,
-            string queryText, string repoName)
-        // </SnippetUpdateSignature>
+        private static async IAsyncEnumerable<JToken> RunPagedQueryAsync(
+            GitHubClient client,
+            string queryText,
+            string repoName)
         {
             var issueAndPRQuery = new GraphQLRequest
             {
@@ -82,51 +69,22 @@ namespace GitHubActivityReport
             issueAndPRQuery.Variables["repo_name"] = repoName;
 
             bool hasMorePages = true;
-            int pagesReturned = 0;
-            int issuesReturned = 0;
+            var (uri, respType) = (new Uri("https://api.github.com/graphql"), "application/json");
 
-            // Stop with 10 pages, because these are large repos:
-            while (hasMorePages && (pagesReturned++ < 10))
+            for (var pagesReturned = 0; hasMorePages && pagesReturned < 10; pagesReturned++)
             {
-                var postBody = issueAndPRQuery.ToJsonText();
-                var response = await client.Connection.Post<string>(new Uri("https://api.github.com/graphql"),
-                    postBody, "application/json", "application/json");
+                var response = await client.Connection.Post<string>(uri, issueAndPRQuery.ToJsonText(), respType, respType);
+                var results = JObject.Parse(response.HttpResponse.Body.ToString());
 
-                JObject results = JObject.Parse(response.HttpResponse.Body.ToString());
+                hasMorePages = (bool)PageInfo(results)["hasPreviousPage"];
+                issueAndPRQuery.Variables["start_cursor"] = PageInfo(results)["startCursor"].ToString();
 
-                int totalCount = (int)issues(results)["totalCount"];
-                hasMorePages = (bool)pageInfo(results)["hasPreviousPage"];
-                issueAndPRQuery.Variables["start_cursor"] = pageInfo(results)["startCursor"].ToString();
-                issuesReturned += issues(results)["nodes"].Count();
-
-                // <SnippetYieldReturnPage>
-                foreach (JObject issue in issues(results)["nodes"])
+                foreach (JObject issue in Issues(results)["nodes"])
                     yield return issue;
-                // </SnippetYieldReturnPage>
             }
 
-            JObject issues(JObject result) => (JObject)result["data"]["repository"]["issues"];
-            JObject pageInfo(JObject result) => (JObject)issues(result)["pageInfo"];
-        }
-        // </SnippetGenerateAsyncStream>
-
-        private static string GetEnvVariable(string item, string error, string defaultValue)
-        {
-            var value = Environment.GetEnvironmentVariable(item);
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                if (!string.IsNullOrWhiteSpace(defaultValue))
-                {
-                    return defaultValue;
-                }
-
-                if (!string.IsNullOrWhiteSpace(error))
-                {
-                    Console.WriteLine(error);
-                    Environment.Exit(0);
-                }
-            }
-            return value;
+            JObject PageInfo(JObject result) => (JObject)Issues(result)["pageInfo"];
+            JObject Issues(JObject result) => (JObject)result["data"]["repository"]["issues"];
         }
     }
 }
